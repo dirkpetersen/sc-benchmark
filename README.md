@@ -104,42 +104,98 @@ here we are writing 10000 small files (max 12 bytes) into the current directory 
 
 In general dna snippet would be much more random if it could be regenerated for each file, however this would increase compute times. If we run this scratch-dna.py on a compute cluster each node would generate unique data.
 
-scatch-dna-go
--------------
+### scratch-dna (Go)
 
-A drop in replacement for scratch-dna.py written in Go that adds the ability to specify how many files to write in parallel (-p num). Also adds verbose output (-v) that shows progress as files are being written.
+**Recommended:** Modern, high-performance Go implementation with parallel I/O, robust error handling, and progress tracking.
 
-### Example 1 - single threaded:
+Located at: `bin/scratch-dna` (Linux AMD64 binary included)
 
+**Features:**
+- Parallel file writing with configurable worker count (`-p`)
+- Real-time progress monitoring (`-v`)
+- Comprehensive error reporting with detailed context
+- Timeout protection to prevent hanging (`-timeout`)
+- Modern Go practices (context cancellation, atomic operations, proper error propagation)
+- Built with Go 1.22+ using `math/rand/v2`
+
+**Usage:**
+```bash
+./bin/scratch-dna [-p <workers>] [-v] [-timeout <seconds>] <num-files> <file-size-bytes> <multiplier> <output-dir>
 ```
-./scratch-dna-go 1000 1048576 10 ~/dna
+
+**Flags:**
+- `-p <int>`: Number of parallel workers (default: 1)
+- `-v`: Enable verbose progress output every second
+- `-timeout <int>`: Timeout in seconds (default: 600)
+
+#### Example 1 - Single threaded:
+
+```bash
+./bin/scratch-dna 1000 1048576 10 ~/dna
+```
+
+Output:
+```
 Building random DNA sequence of 1.0 MB...
 
 Writing 1000 files with filesizes between 1.0 MB and 10.0 MB...
+Using 1 parallel workers
 
-
-Done!
-Number of Files Written: 1000, Total Size: 5.4GiB, Avg FPS: 34, Avg Throughput: 190 MiB/s, Elapsed Time: 29 seconds
+================================================================================
+Benchmark Complete!
+================================================================================
+Files Written:    1000
+Total Size:       5.40 GiB (5796.00 MB)
+Elapsed Time:     29 seconds
+Avg FPS:          34 files/second
+Avg Throughput:   190 MiB/s
+================================================================================
 ```
 
-### Example 2 - 8 threads with verbose output:
+#### Example 2 - 8 workers with verbose output:
 
+```bash
+./bin/scratch-dna -v -p 8 1000 1048576 10 ~/dna
 ```
-./scratch-dna-go -v -p 8 1000 1048576 10 ~/dna
+
+Output:
+```
 Building random DNA sequence of 1.0 MB...
 
 Writing 1000 files with filesizes between 1.0 MB and 10.0 MB...
+Using 8 parallel workers
 
-Files Completed:     139, Data Written:   0.7GiB, Files Remaining:     868, Cur FPS:   139, Throughput:  745 MiB/s
-Files Completed:     277, Data Written:   1.4GiB, Files Remaining:     730, Cur FPS:   138, Throughput:  738 MiB/s
-Files Completed:     354, Data Written:   1.8GiB, Files Remaining:     652, Cur FPS:   118, Throughput:  626 MiB/s
-Files Completed:     370, Data Written:   1.9GiB, Files Remaining:     635, Cur FPS:    92, Throughput:  494 MiB/s
-Files Completed:     428, Data Written:   2.2GiB, Files Remaining:     578, Cur FPS:    85, Throughput:  460 MiB/s
-Files Completed:     529, Data Written:   2.8GiB, Files Remaining:     477, Cur FPS:    88, Throughput:  479 MiB/s
-Files Completed:     672, Data Written:   3.5GiB, Files Remaining:     332, Cur FPS:    96, Throughput:  517 MiB/s
-Files Completed:     805, Data Written:   4.3GiB, Files Remaining:     201, Cur FPS:   100, Throughput:  545 MiB/s
-Files Completed:     938, Data Written:   4.9GiB, Files Remaining:      67, Cur FPS:   104, Throughput:  562 MiB/s
+Progress:  13.90% | Files:     139/   1000 | Data:   0.7 GiB | FPS:   139 | Throughput:  745 MiB/s | Remaining:     861
+Progress:  27.70% | Files:     277/   1000 | Data:   1.4 GiB | FPS:   138 | Throughput:  738 MiB/s | Remaining:     723
+Progress:  35.40% | Files:     354/   1000 | Data:   1.8 GiB | FPS:   118 | Throughput:  626 MiB/s | Remaining:     646
+Progress:  93.80% | Files:     938/   1000 | Data:   4.9 GiB | FPS:   104 | Throughput:  562 MiB/s | Remaining:      62
 
-Done!
-Number of Files Written: 1000, Total Size: 5.3GiB, Avg FPS: 100, Avg Throughput: 541 MiB/s, Elapsed Time: 10 seconds
+================================================================================
+Benchmark Complete!
+================================================================================
+Files Written:    1000
+Total Size:       5.30 GiB (5693.00 MB)
+Elapsed Time:     10 seconds
+Avg FPS:          100 files/second
+Avg Throughput:   541 MiB/s
+================================================================================
 ```
+
+**Error Handling:**
+
+The tool provides detailed error messages if issues occur:
+```bash
+./bin/scratch-dna -p 4 100 1024 2 /nonexistent
+# Output: 2025/10/18 15:45:14 scratch-dna-go.go:57: Directory error: stat /nonexistent: no such file or directory
+```
+
+All I/O errors are reported with worker ID, operation type, and file path for easy debugging.
+
+**Building from Source:**
+
+```bash
+cd src
+go build -ldflags="-s -w" -o ../bin/scratch-dna scratch-dna-go.go
+```
+
+Requires Go 1.22 or later.
