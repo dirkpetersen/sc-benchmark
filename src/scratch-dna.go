@@ -24,13 +24,14 @@ func main() {
 	var pFlag = flag.Int("p", 1, "Optional: set number of concurrent file writers to use; defaults to 1")
 	var vFlag = flag.Bool("v", false, "Optional: Turn on verbose output mode; it will print the progress every second")
 	var timeoutFlag = flag.Int("timeout", 600, "Optional: timeout in seconds for the entire operation (default: 600)")
+	var syncFlag = flag.Bool("sync", false, "Optional: call fsync() after each file write (slower but ensures data on disk)")
 
 	flag.Parse()
 	args := flag.Args()
 
 	if len(args) != 4 {
 		fmt.Fprintf(os.Stderr, "Error! 4 positional arguments required.\n")
-		fmt.Fprintf(os.Stderr, "\nUsage: %s [-p <parallel threads> -v (verbose) -timeout <seconds>] <number-of-files> <file-size-bytes> <random-file-size-multiplier> <writable-directory>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nUsage: %s [-p <parallel threads> -v (verbose) -sync -timeout <seconds>] <number-of-files> <file-size-bytes> <random-file-size-multiplier> <writable-directory>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nExample: %s -v -p 8 1024 10485760 1 /tmp\n\n", os.Args[0])
 		os.Exit(1)
 	}
@@ -73,7 +74,14 @@ func main() {
 		log.Printf("Warning: Could not get hostname: %v, using 'dna'", err)
 		hostname = "dna"
 	}
-	hostname += fmt.Sprintf("_%08d", rand.IntN(100000000))
+	// Faster integer formatting using strconv
+	hostname = hostname + "_" + strconv.Itoa(rand.IntN(100000000))
+
+	// Create output directory once upfront to avoid race conditions
+	outDir := filepath.Join(dFlag, hostname)
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		log.Fatalf("Failed to create output directory %s: %v", outDir, err)
+	}
 
 	// Create context with timeout to prevent hanging
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutFlag)*time.Second)
@@ -101,7 +109,7 @@ func main() {
 	// Launch file writers
 	for x := 1; x <= nFlag; x++ {
 		wg.Add(1)
-		go spraydna(ctx, x, wg, sema, &out, dFlag, progress, errors, mFlag, hostname)
+		go spraydna(ctx, x, wg, sema, out, outDir, progress, errors, mFlag, hostname, *syncFlag)
 	}
 
 	// Progress ticker
@@ -167,16 +175,8 @@ func genstring(size int) []byte {
 	return dna
 }
 
-func spraydna(ctx context.Context, count int, wg *sync.WaitGroup, sema chan struct{}, out *[]byte, dir string, progress chan<- int64, errors chan<- error, mFlag int, hostname string) {
+func spraydna(ctx context.Context, count int, wg *sync.WaitGroup, sema chan struct{}, out []byte, dir string, progress chan<- int64, errors chan<- error, mFlag int, hostname string, doSync bool) {
 	defer wg.Done()
-
-	// Check context before starting work
-	select {
-	case <-ctx.Done():
-		errors <- fmt.Errorf("worker %d: context cancelled before starting", count)
-		return
-	default:
-	}
 
 	// Acquire semaphore token
 	select {
@@ -187,18 +187,9 @@ func spraydna(ctx context.Context, count int, wg *sync.WaitGroup, sema chan stru
 		return
 	}
 
-	path := filepath.Join(dir, hostname)
-
-	// Create directory if it doesn't exist
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.MkdirAll(path, 0755); err != nil {
-			errors <- fmt.Errorf("worker %d: failed to create directory %s: %w", count, path, err)
-			return
-		}
-	}
-
 	multiple := rand.IntN(mFlag) + 1
-	filename := filepath.Join(path, fmt.Sprintf("%s-%d-%d.txt", hostname, count, multiple))
+	// Faster filename construction with strconv
+	filename := filepath.Join(dir, hostname+"-"+strconv.Itoa(count)+"-"+strconv.Itoa(multiple)+".txt")
 
 	f, err := os.Create(filename)
 	if err != nil {
@@ -215,17 +206,7 @@ func spraydna(ctx context.Context, count int, wg *sync.WaitGroup, sema chan stru
 	writtenBytes := 0
 
 	for j := 0; j < multiple; j++ {
-		// Check context periodically for large files
-		if j%10 == 0 {
-			select {
-			case <-ctx.Done():
-				errors <- fmt.Errorf("worker %d: context cancelled during write", count)
-				return
-			default:
-			}
-		}
-
-		n, err := w.Write(*out)
+		n, err := w.Write(out)
 		if err != nil {
 			errors <- fmt.Errorf("worker %d: write failed on iteration %d/%d to %s: %w", count, j+1, multiple, filename, err)
 			return
@@ -238,9 +219,12 @@ func spraydna(ctx context.Context, count int, wg *sync.WaitGroup, sema chan stru
 		return
 	}
 
-	if err := f.Sync(); err != nil {
-		errors <- fmt.Errorf("worker %d: sync failed for %s: %w", count, filename, err)
-		return
+	// Only sync if explicitly requested (much faster without it)
+	if doSync {
+		if err := f.Sync(); err != nil {
+			errors <- fmt.Errorf("worker %d: sync failed for %s: %w", count, filename, err)
+			return
+		}
 	}
 
 	// Successfully completed - send progress

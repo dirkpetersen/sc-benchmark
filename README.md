@@ -186,7 +186,7 @@ Avg Throughput:   541 MiB/s
 The tool provides detailed error messages if issues occur:
 ```bash
 ./bin/scratch-dna -p 4 100 1024 2 /nonexistent
-# Output: 2025/10/18 15:45:14 scratch-dna-go.go:57: Directory error: stat /nonexistent: no such file or directory
+# Output: 2025/10/18 15:45:14 scratch-dna.go:57: Directory error: stat /nonexistent: no such file or directory
 ```
 
 All I/O errors are reported with worker ID, operation type, and file path for easy debugging.
@@ -195,7 +195,7 @@ All I/O errors are reported with worker ID, operation type, and file path for ea
 
 ```bash
 cd src
-go build -ldflags="-s -w" -o ../bin/scratch-dna scratch-dna-go.go
+go build -ldflags="-s -w" -o ../bin/scratch-dna-go scratch-dna.go
 ```
 
 Requires Go 1.22 or later.
