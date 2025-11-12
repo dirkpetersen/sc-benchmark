@@ -178,12 +178,22 @@ func genstring(size int) []byte {
 func spraydna(ctx context.Context, count int, wg *sync.WaitGroup, sema chan struct{}, out []byte, dir string, progress chan<- int64, errors chan<- error, mFlag int, hostname string, doSync bool) {
 	defer wg.Done()
 
+	// Helper to safely send errors (non-blocking)
+	sendError := func(err error) {
+		select {
+		case errors <- err:
+		default:
+			// Channel full or closed, log instead
+			log.Printf("Worker %d error (channel unavailable): %v", count, err)
+		}
+	}
+
 	// Acquire semaphore token
 	select {
 	case sema <- struct{}{}:
 		defer func() { <-sema }() // release token
 	case <-ctx.Done():
-		errors <- fmt.Errorf("worker %d: context cancelled while waiting for semaphore", count)
+		sendError(fmt.Errorf("worker %d: context cancelled while waiting for semaphore", count))
 		return
 	}
 
@@ -193,12 +203,12 @@ func spraydna(ctx context.Context, count int, wg *sync.WaitGroup, sema chan stru
 
 	f, err := os.Create(filename)
 	if err != nil {
-		errors <- fmt.Errorf("worker %d: failed to create file %s: %w", count, filename, err)
+		sendError(fmt.Errorf("worker %d: failed to create file %s: %w", count, filename, err))
 		return
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
-			errors <- fmt.Errorf("worker %d: failed to close file %s: %w", count, filename, closeErr)
+			sendError(fmt.Errorf("worker %d: failed to close file %s: %w", count, filename, closeErr))
 		}
 	}()
 
@@ -208,34 +218,34 @@ func spraydna(ctx context.Context, count int, wg *sync.WaitGroup, sema chan stru
 	for j := 0; j < multiple; j++ {
 		n, err := w.Write(out)
 		if err != nil {
-			errors <- fmt.Errorf("worker %d: write failed on iteration %d/%d to %s: %w", count, j+1, multiple, filename, err)
+			sendError(fmt.Errorf("worker %d: write failed on iteration %d/%d to %s: %w", count, j+1, multiple, filename, err))
 			return
 		}
 		writtenBytes += n
 	}
 
 	if err := w.Flush(); err != nil {
-		errors <- fmt.Errorf("worker %d: flush failed for %s: %w", count, filename, err)
+		sendError(fmt.Errorf("worker %d: flush failed for %s: %w", count, filename, err))
 		return
 	}
 
 	// Only sync if explicitly requested (much faster without it)
 	if doSync {
 		if err := f.Sync(); err != nil {
-			errors <- fmt.Errorf("worker %d: sync failed for %s: %w", count, filename, err)
+			sendError(fmt.Errorf("worker %d: sync failed for %s: %w", count, filename, err))
 			return
 		}
 	}
 
-	// Successfully completed - send progress
+	// Successfully completed - send progress (non-blocking)
 	select {
 	case progress <- int64(writtenBytes):
 	case <-ctx.Done():
-		errors <- fmt.Errorf("worker %d: context cancelled while reporting progress", count)
+		sendError(fmt.Errorf("worker %d: context cancelled while reporting progress", count))
+		return
+	default:
+		// Progress channel full or closed, skip
 	}
-
-	// Send nil error to indicate success
-	errors <- nil
 }
 
 func printProgress(nfiles, nbytes, start, total int64) {
